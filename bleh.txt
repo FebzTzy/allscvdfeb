@@ -1,0 +1,53 @@
+-- Bleh public loader. No key or account login required.
+-- Download links are short-lived; executed client code can still be extracted.
+local api = "https://api.x8stuff.lol"
+local json = game:GetService("HttpService")
+local function fetch(url)
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(body) ~= "string" then
+        error("Bleh: download failed. Please retry. " .. tostring(body), 0)
+    end
+    return body
+end
+local function decode64(data)
+    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local lookup = {}
+    for i = 1, #alphabet do lookup[alphabet:sub(i, i)] = i - 1 end
+    if #data % 4 ~= 0 then error("Bleh: incomplete download. Reload the script.", 0) end
+    local result = {}
+    for i = 1, #data, 4 do
+        local a, b = lookup[data:sub(i, i)], lookup[data:sub(i + 1, i + 1)]
+        local cc, dd = data:sub(i + 2, i + 2), data:sub(i + 3, i + 3)
+        local c, d = lookup[cc], lookup[dd]
+        if a == nil or b == nil or (c == nil and cc ~= "=") or (d == nil and dd ~= "=") then
+            error("Bleh: invalid download. Reload the script.", 0)
+        end
+        local value = a * 262144 + b * 4096 + (c or 0) * 64 + (d or 0)
+        result[#result + 1] = string.char(math.floor(value / 65536) % 256)
+        if cc ~= "=" then result[#result + 1] = string.char(math.floor(value / 256) % 256) end
+        if dd ~= "=" then result[#result + 1] = string.char(value % 256) end
+    end
+    return table.concat(result)
+end
+local ok, ticket = pcall(function() return json:JSONDecode(fetch(api .. "/v1/bleh/ticket")) end)
+if not ok or type(ticket) ~= "table" then error("Bleh: server returned an invalid response. Please retry.", 0) end
+if not ticket.ok then error("Bleh: " .. tostring(ticket.message or ticket.code or "Download unavailable"), 0) end
+if type(ticket.tempUrl) ~= "string" or not ticket.tempUrl:match("^/v1/bleh/stream/[a-f0-9]+$")
+    or type(ticket.sessionKey) ~= "string" or #ticket.sessionKey ~= 64 then
+    error("Bleh: invalid download ticket. Please retry.", 0)
+end
+local encoded = fetch(api .. ticket.tempUrl)
+if #encoded ~= ticket.expectedLength then
+    local parsed, reason = pcall(function() return json:JSONDecode(encoded) end)
+    error("Bleh: " .. tostring(parsed and reason.message or "download expired or incomplete; reload the script"), 0)
+end
+local bytes = decode64(encoded)
+local decoded = table.create(#bytes)
+for i = 1, #bytes do
+    decoded[i] = string.char(bit32.bxor(bytes:byte(i), ticket.sessionKey:byte((i - 1) % 64 + 1)))
+end
+local source = table.concat(decoded)
+if #source ~= ticket.sourceLength then error("Bleh: incomplete script. Please retry.", 0) end
+local chunk, compileError = loadstring(source, "@Bleh")
+if type(chunk) ~= "function" then error("Bleh: compile error: " .. tostring(compileError), 0) end
+return chunk()
